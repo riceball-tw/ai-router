@@ -1,34 +1,43 @@
-import { ref } from "vue";
-import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
+import { ACTION_LABEL, DESTRUCTIVE, lookupAction, NO_ACTION, type ActionId } from "@/ai/actions";
 import {
+  ACTION_FLOOR,
   CONFIDENCE_FLOOR,
-  NO_ORDER,
+  DESTINATION_LABEL,
   ranked,
   type Destination,
   type IntentAnswers,
   type IntentResponse,
-} from "./intents";
+} from "@/ai/intents";
+import { resolveIntent } from "@/ai/resolve-intent";
+import { addSavedView } from "@/ai/saved-views";
+import { ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-/** Where each label lands. `unknown` deliberately has no route. */
-const ROUTES: Record<Destination, RouteLocationRaw | null> = {
-  home: { name: "home" },
-  orders: { name: "orders" },
-  order_detail: { name: "orders" }, // refined below once we know which order
-  products: { name: "products" },
-  cart: { name: "cart" },
-  settings: { name: "settings" },
-  help: { name: "help" },
-  unknown: null,
-};
+/** A page the user can pick, with the state that will be carried onto it. */
+export interface Choice {
+  destination: Destination;
+  /** "主機列表（CVSS ≥ 7・風險分數↓）" — the button's text. */
+  label: string;
+  answers: IntentAnswers;
+}
+
+/** A destructive action waiting for a yes. */
+export interface Confirm {
+  question: string;
+  run: () => void;
+}
 
 export interface Turn {
   id: number;
   text: string;
   role: "user" | "agent";
-  /** Present on agent turns that came back from the classifier. */
   intent?: IntentResponse;
-  /** Offered when confidence is too low to navigate on its own. */
-  suggestions?: Destination[];
+  /** Pages offered when the classifier was unsure, or when this page dropped state. */
+  choices?: Choice[];
+  /** Shown as 執行 / 取消 buttons; nothing runs until the user says so. */
+  confirm?: Confirm;
+  /** 0–4, drives how loud the turn looks. */
+  urgency?: number;
   pending?: boolean;
   error?: string;
 }
@@ -37,6 +46,10 @@ export interface Turn {
 const ENDPOINT = import.meta.env.VITE_INTENT_ENDPOINT ?? "/api/intent";
 
 let nextId = 0;
+
+function parenthesise(parts: string[]): string {
+  return parts.length ? `（${parts.join("・")}）` : "";
+}
 
 export function useIntentRouter() {
   const router = useRouter();
@@ -50,41 +63,125 @@ export function useIntentRouter() {
     return turn;
   }
 
-  function target(answers: IntentAnswers): RouteLocationRaw | null {
-    const destination = answers.destination.choice;
-    if (destination === "order_detail" && answers.order.choice !== NO_ORDER) {
-      return { name: "order-detail", params: { id: answers.order.choice } };
+  function currentView() {
+    return {
+      routeName: String(route.name ?? ""),
+      query: route.query as Record<string, string>,
+    };
+  }
+
+  /** The page's name plus the state that would survive on it — computed, not guessed. */
+  function choiceFor(destination: Destination, answers: IntentAnswers): Choice | null {
+    const resolved = resolveIntent(answers, destination, currentView());
+    if (!resolved) return null;
+    return {
+      destination,
+      label: `${DESTINATION_LABEL[destination]}${parenthesise(resolved.applied)}`,
+      answers,
+    };
+  }
+
+  /**
+   * Actions run only when the classifier is clearly sure *and* read the message as an
+   * instruction, only when the page that is now open offers them, and — if they change
+   * data — only after the user says yes. The `DESTRUCTIVE` table decides that last part,
+   * never the model's own `destructive` answer.
+   */
+  /** Both action gates, as one question the caller can ask before deciding to navigate. */
+  function actionable(answers: IntentAnswers): boolean {
+    const { action, perform } = answers;
+    // Two different questions: confidence says which action was meant, `perform` says the
+    // user asked for it to happen. Confidence alone is not permission to act.
+    return action.choice !== NO_ACTION && action.confidence >= ACTION_FLOOR && perform.noul >= 0.5;
+  }
+
+  function actOn(answers: IntentAnswers, urgency: number) {
+    const { action } = answers;
+    if (!actionable(answers)) return;
+
+    if (action.choice === "save_view") {
+      const name = addSavedView(router.currentRoute.value.fullPath);
+      say(`已存成常用視圖：${name}`, { urgency });
+      return;
     }
-    return ROUTES[destination];
+
+    const handler = lookupAction(action.choice);
+    if (!handler) {
+      say(`這個頁面沒有「${ACTION_LABEL[action.choice]}」這個動作。`, { urgency });
+      return;
+    }
+
+    if (DESTRUCTIVE[action.choice]) {
+      say(`${handler.describe()}`, {
+        urgency,
+        confirm: {
+          question: ACTION_LABEL[action.choice],
+          run: () => {
+            handler.run();
+            say(`已執行：${ACTION_LABEL[action.choice as ActionId]}`);
+          },
+        },
+      });
+      return;
+    }
+
+    handler.run();
+    say(`已執行：${ACTION_LABEL[action.choice]}`, { urgency });
   }
 
   async function act(intent: IntentResponse) {
-    const { destination, navigational } = intent.answers;
+    const answers = intent.answers;
+    const { destination, navigational } = answers;
+    const urgency = Math.round(answers.urgency.score);
 
-    if (navigational.noul < 0.5) {
-      say("Reads like chat, not a request to go anywhere — staying put.", { intent });
+    if (navigational.noul < 0.5 && !actionable(answers)) {
+      say("看起來是聊天，不是要換頁 — 留在原地。", { intent, urgency });
+      return;
+    }
+
+    // Unsure which page: hand the decision over, but keep the filters and the ordering —
+    // picking a page below re-resolves the same answers against it and carries them along.
+    // "存成常用視圖" names an action and no page at all, so page confidence is meaningless
+    // and must not block it: run it where the user already is.
+    if (destination.confidence < CONFIDENCE_FLOOR && actionable(answers)) {
+      actOn(answers, urgency);
       return;
     }
 
     if (destination.confidence < CONFIDENCE_FLOOR) {
-      const suggestions = ranked(destination.probabilities)
-        .slice(0, 2)
-        .map(([label]) => label as Destination);
+      const choices = ranked(destination.probabilities)
+        .slice(0, 3)
+        .map(([label]) => choiceFor(label as Destination, answers))
+        .filter((choice) => choice !== null);
       say(
-        `Not confident enough (${destination.confidence.toFixed(2)} < ${CONFIDENCE_FLOOR}) — did you mean one of these?`,
-        { intent, suggestions },
+        `信心不足（${destination.confidence.toFixed(2)} < ${CONFIDENCE_FLOOR}），你要看哪一個？`,
+        {
+          intent,
+          choices,
+          urgency,
+        },
       );
       return;
     }
 
-    const to = target(intent.answers);
-    if (!to) {
-      say("Nothing in this app matches that.", { intent });
+    const resolved = resolveIntent(answers, destination.choice, currentView());
+    if (!resolved) {
+      say("這個系統裡沒有對應的頁面。", { intent, urgency });
       return;
     }
 
-    await router.push(to);
-    say(`Going to ${router.currentRoute.value.fullPath}`, { intent });
+    await router.push(resolved.route);
+
+    const alternative = resolved.dropped ? choiceFor(resolved.dropped.on, answers) : null;
+    say(
+      `${resolved.refining ? "調整" : "前往"} ${DESTINATION_LABEL[destination.choice]}${parenthesise(resolved.applied)}：${router.currentRoute.value.fullPath}` +
+        (resolved.dropped
+          ? `　「${resolved.dropped.labels.join("・")}」這裡看不到，要改看嗎？`
+          : ""),
+      { intent, urgency, choices: alternative ? [alternative] : undefined },
+    );
+
+    actOn(answers, urgency);
   }
 
   async function send(text: string) {
@@ -92,7 +189,7 @@ export function useIntentRouter() {
     if (!message || busy.value) return;
     turns.value.push({ id: nextId++, role: "user", text: message });
     busy.value = true;
-    const thinking = say("Classifying…", { pending: true });
+    const thinking = say("分類中⋯⋯", { pending: true });
 
     try {
       const response = await fetch(ENDPOINT, {
@@ -112,13 +209,23 @@ export function useIntentRouter() {
     }
   }
 
-  /** Used by the low-confidence suggestion buttons. */
-  async function goTo(destination: Destination) {
-    const to = ROUTES[destination];
-    if (!to) return;
-    await router.push(to);
-    say(`Going to ${router.currentRoute.value.fullPath}`);
+  /** The user picked a page: continue the same intent there. */
+  async function choose(choice: Choice) {
+    const resolved = resolveIntent(choice.answers, choice.destination, currentView());
+    if (!resolved) return;
+    await router.push(resolved.route);
+    say(
+      `前往 ${DESTINATION_LABEL[choice.destination]}${parenthesise(resolved.applied)}：${router.currentRoute.value.fullPath}`,
+    );
   }
 
-  return { turns, busy, send, goTo };
+  /** The user answered a confirmation. */
+  function resolveConfirm(turn: Turn, yes: boolean) {
+    const pending = turn.confirm;
+    turn.confirm = undefined;
+    if (yes) pending?.run();
+    else say("已取消。");
+  }
+
+  return { turns, busy, send, choose, resolveConfirm };
 }
