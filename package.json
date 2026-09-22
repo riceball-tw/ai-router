@@ -10,7 +10,8 @@
     "prepare": "vp config",
     "cf:dev": "wrangler dev",
     "deploy:worker": "wrangler deploy",
-    "deploy:pages": "vp build && wrangler pages deploy dist --project-name ai-router"
+    "deploy:pages": "vp build && wrangler pages deploy dist --project-name ai-router",
+    "eval": "INTENT_EVAL=1 vp test run src/ai/intents.eval.test.ts"
   },
   "dependencies": {
     "@lucide/vue": "^1.47.0",
