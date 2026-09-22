@@ -65,7 +65,10 @@ Two Cloudflare pieces, deployed by GitHub Actions on every push to `main`
 (`.github/workflows/deploy.yml`):
 
 - **Worker** (`ai-router-api`) — `POST /api/intent` only. Holds `TYPESAFE_API_KEY` as a Cloudflare
-  secret.
+  secret, and rate limits `/api/*` to 30 requests per minute per IP (the `INTENT_RATE_LIMIT`
+  binding in `wrangler.jsonc`) so an open endpoint cannot burn the key. Over the limit answers
+  `429` with `retry-after: 60`. The limit is counted per Cloudflare colo, not globally, and is
+  skipped under `vp dev`, where there is no binding.
 - **Pages** — the built `dist/`, static. It calls the Worker cross-origin via
   `VITE_INTENT_ENDPOINT`, which the Worker allows through `ALLOWED_ORIGINS`.
 
