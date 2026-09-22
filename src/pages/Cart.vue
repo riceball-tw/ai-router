@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import { cart, products } from "@/data/demo";
 import { computed } from "vue";
-import { cart, products } from "../data/demo";
 
 const lines = computed(() =>
   cart.map((line) => ({
@@ -14,13 +14,14 @@ const total = computed(() =>
 </script>
 
 <template>
-  <section class="page">
-    <h1>Cart</h1>
-    <ul>
-      <li v-for="line in lines" :key="line.productId">
-        {{ line.qty }} × {{ line.product.name }} — ${{ line.product.price * line.qty }}
+  <section class="mx-auto max-w-3xl space-y-4 p-8">
+    <h1 class="text-3xl font-semibold tracking-tight">Cart</h1>
+    <ul class="divide-y text-sm">
+      <li v-for="line in lines" :key="line.productId" class="flex justify-between py-2">
+        <span>{{ line.qty }} × {{ line.product.name }}</span>
+        <span class="tabular-nums">${{ line.product.price * line.qty }}</span>
       </li>
     </ul>
-    <p class="status">Total ${{ total }}</p>
+    <p class="text-sm font-medium">Total ${{ total }}</p>
   </section>
 </template>

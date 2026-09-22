@@ -1,31 +1,37 @@
 <script setup lang="ts">
-import { orders } from "../data/demo";
+import { Badge } from "@/components/ui/badge";
+import { orders } from "@/data/demo";
 </script>
 
 <template>
-  <section class="page">
-    <h1>Orders</h1>
-    <table class="data">
+  <section class="mx-auto max-w-3xl space-y-4 p-8">
+    <h1 class="text-3xl font-semibold tracking-tight">Orders</h1>
+    <table class="w-full text-sm">
       <thead>
-        <tr>
-          <th>Order</th>
-          <th>Placed</th>
-          <th>Status</th>
-          <th>Items</th>
-          <th>Total</th>
+        <tr class="text-muted-foreground border-b text-left">
+          <th class="px-3 py-2 font-medium">Order</th>
+          <th class="px-3 py-2 font-medium">Placed</th>
+          <th class="px-3 py-2 font-medium">Status</th>
+          <th class="px-3 py-2 font-medium">Items</th>
+          <th class="px-3 py-2 font-medium">Total</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="order in orders" :key="order.id">
-          <td>
-            <RouterLink :to="{ name: 'order-detail', params: { id: order.id } }">{{
-              order.id
-            }}</RouterLink>
+        <tr v-for="order in orders" :key="order.id" class="border-b last:border-0">
+          <td class="px-3 py-2">
+            <RouterLink
+              :to="{ name: 'order-detail', params: { id: order.id } }"
+              class="font-medium underline-offset-4 hover:underline"
+            >
+              {{ order.id }}
+            </RouterLink>
           </td>
-          <td>{{ order.placedAt }}</td>
-          <td>{{ order.status }}</td>
-          <td>{{ order.items.join(", ") }}</td>
-          <td>${{ order.total }}</td>
+          <td class="text-muted-foreground px-3 py-2">{{ order.placedAt }}</td>
+          <td class="px-3 py-2">
+            <Badge variant="secondary">{{ order.status }}</Badge>
+          </td>
+          <td class="text-muted-foreground px-3 py-2">{{ order.items.join(", ") }}</td>
+          <td class="px-3 py-2 tabular-nums">${{ order.total }}</td>
         </tr>
       </tbody>
     </table>
