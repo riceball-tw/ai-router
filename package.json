@@ -18,6 +18,7 @@
     "@vueuse/core": "^15.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "hono": "^4.13.8",
     "reka-ui": "^2.10.5",
     "shadcn-vue": "^2.8.2",
     "tailwind-merge": "^3.7.0",

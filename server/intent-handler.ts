@@ -1,5 +1,5 @@
 import type { Connect } from "vite";
-import { handleIntentRequest } from "./intent-core";
+import { app } from "./app";
 
 function readBody(req: Connect.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -10,23 +10,42 @@ function readBody(req: Connect.IncomingMessage): Promise<string> {
   });
 }
 
-/** Dev-server middleware: keeps the API key on the server, never in the bundle. */
+function toRequest(req: Connect.IncomingMessage, body: string | undefined): Request {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers.set(name, value);
+    else if (Array.isArray(value)) for (const entry of value) headers.append(name, entry);
+  }
+  return new Request(new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`), {
+    method: req.method ?? "GET",
+    headers,
+    body,
+  });
+}
+
+/**
+ * Dev-server middleware: runs the same Hono app the Worker runs, so the API key
+ * stays on the server and dev matches the edge deploy.
+ */
 export const intentMiddleware: Connect.NextHandleFunction = (req, res, next) => {
-  if (req.url !== "/api/intent" || req.method !== "POST") {
+  if (!req.url?.startsWith("/api/")) {
     next();
     return;
   }
   void (async () => {
-    res.setHeader("content-type", "application/json");
     try {
-      const { status, payload } = await handleIntentRequest(
-        JSON.parse(await readBody(req)),
-        process.env.TYPESAFE_API_KEY,
-      );
-      res.statusCode = status;
-      res.end(JSON.stringify(payload));
+      const method = req.method ?? "GET";
+      const body = method === "GET" || method === "HEAD" ? undefined : await readBody(req);
+      const response = await app.fetch(toRequest(req, body), {
+        TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,
+        ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+      });
+      res.statusCode = response.status;
+      response.headers.forEach((value, name) => res.setHeader(name, value));
+      res.end(Buffer.from(await response.arrayBuffer()));
     } catch (error) {
       res.statusCode = 500;
+      res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   })();
