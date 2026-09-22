@@ -1,4 +1,6 @@
+import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
+import { fileURLToPath, URL } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite-plus";
 import { intentMiddleware } from "./server/intent-handler";
 
@@ -27,7 +29,10 @@ export default defineConfig(({ mode }) => {
   return {
     // GitHub Pages serves from /<repo>/; set PAGES_BASE for that build.
     base: env.PAGES_BASE ?? "/",
-    plugins: [vue(), intentApi()],
+    plugins: [vue(), tailwindcss(), intentApi()],
+    resolve: {
+      alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    },
     // Fail loudly instead of drifting to another port: a stale dev server left on
     // the default port is otherwise served to the browser with its old env.
     server: { strictPort: true },
