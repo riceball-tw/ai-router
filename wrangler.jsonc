@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-router-api",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  // The TypeSafe SDK reads process.env and process.versions; nodejs_compat provides them.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // No assets binding: the frontend is deployed separately to Cloudflare Pages.
+  // To serve both from one origin instead, add:
+  //   "assets": { "directory": "./dist", "binding": "ASSETS",
+  //               "not_found_handling": "single-page-application" }
+}

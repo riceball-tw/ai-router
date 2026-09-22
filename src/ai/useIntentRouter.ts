@@ -33,6 +33,9 @@ export interface Turn {
   error?: string;
 }
 
+/** Same-origin by default; set VITE_INTENT_ENDPOINT when the API lives on another host. */
+const ENDPOINT = import.meta.env.VITE_INTENT_ENDPOINT ?? "/api/intent";
+
 let nextId = 0;
 
 export function useIntentRouter() {
@@ -92,7 +95,7 @@ export function useIntentRouter() {
     const thinking = say("Classifying…", { pending: true });
 
     try {
-      const response = await fetch("/api/intent", {
+      const response = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message, currentPath: route.fullPath }),

@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  # Backend first: the Pages build points at this Worker, so it must exist.
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # ALLOWED_ORIGINS is a plain var (not a secret): the Pages origin allowed to
+      # call /api/intent cross-origin, e.g. https://ai-router.pages.dev
+      - name: Deploy Worker
+        run: pnpm exec wrangler deploy --var ALLOWED_ORIGINS:"${{ vars.ALLOWED_ORIGINS }}"
+
+      # Pushed every run so rotating the key in GitHub rotates it on Cloudflare.
+      - name: Sync TYPESAFE_API_KEY
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "::warning::TYPESAFE_API_KEY not set — the Worker will answer from the keyword stub"
+            exit 0
+          fi
+          printf '%s' "$TYPESAFE_API_KEY" | pnpm exec wrangler secret put TYPESAFE_API_KEY
+
+  pages:
+    needs: worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # VITE_INTENT_ENDPOINT is a public URL, not a credential: the Worker route
+      # the browser calls, e.g. https://ai-router-api.<subdomain>.workers.dev/api/intent
+      - name: Build frontend
+        env:
+          VITE_INTENT_ENDPOINT: ${{ vars.VITE_INTENT_ENDPOINT }}
+        run: pnpm exec vp build
+
+      - name: Create Pages project if missing
+        run: |
+          pnpm exec wrangler pages project create "${{ vars.PAGES_PROJECT }}" \
+            --production-branch main || true
+
+      - name: Deploy to Pages
+        run: |
+          pnpm exec wrangler pages deploy dist \
+            --project-name "${{ vars.PAGES_PROJECT }}" \
+            --branch "${{ github.ref_name }}" \
+            --commit-dirty=true

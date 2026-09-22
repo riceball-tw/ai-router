@@ -25,6 +25,8 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    // GitHub Pages serves from /<repo>/; set PAGES_BASE for that build.
+    base: env.PAGES_BASE ?? "/",
     plugins: [vue(), intentApi()],
     // Fail loudly instead of drifting to another port: a stale dev server left on
     // the default port is otherwise served to the browser with its old env.

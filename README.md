@@ -43,18 +43,84 @@ Routing rules live in the client, not the model (`src/ai/useIntentRouter.ts`):
 
 ## Files
 
-| path                            | role                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------ |
-| `src/ai/intents.ts`             | the label set and their descriptions — single source of truth                  |
-| `server/intent-handler.ts`      | `POST /api/intent`: builds the questions, calls the SDK, keyword stub fallback |
-| `vite.config.ts`                | mounts that handler on the dev and preview servers                             |
-| `src/ai/useIntentRouter.ts`     | confidence gate + `router.push()`                                              |
-| `src/components/IntentChat.vue` | chat panel, shows every probability the model returned                         |
-| `src/data/demo.ts`              | fake orders, products, cart                                                    |
+| path                            | role                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `src/ai/intents.ts`             | the label set and their descriptions — single source of truth                     |
+| `server/intent-handler.ts`      | dev-server adapter for `POST /api/intent`                                         |
+| `vite.config.ts`                | mounts that handler on the dev and preview servers                                |
+| `worker/index.ts`               | Cloudflare Worker: same endpoint plus static assets, for production               |
+| `wrangler.jsonc`                | Worker and static asset config                                                    |
+| `server/intent-core.ts`         | builds the questions, calls the SDK, keyword stub fallback — shared by both hosts |
+| `src/ai/useIntentRouter.ts`     | confidence gate + `router.push()`                                                 |
+| `src/components/IntentChat.vue` | chat panel, shows every probability the model returned                            |
+| `src/data/demo.ts`              | fake orders, products, cart                                                       |
 
 `TYPESAFE_API_KEY` has no `VITE_` prefix on purpose: the classification call runs on the server, so
 the key never reaches the browser bundle. A production deploy needs a real backend route instead of
 the Vite middleware.
+
+## Deploy
+
+Two Cloudflare pieces, deployed by GitHub Actions on every push to `main`
+(`.github/workflows/deploy.yml`):
+
+- **Worker** (`ai-router-api`) — `POST /api/intent` only. Holds `TYPESAFE_API_KEY` as a Cloudflare
+  secret.
+- **Pages** — the built `dist/`, static. It calls the Worker cross-origin via
+  `VITE_INTENT_ENDPOINT`, which the Worker allows through `ALLOWED_ORIGINS`.
+
+The Worker job runs first, so the frontend never ships pointing at a Worker that does not exist yet.
+`.github/workflows/ci.yml` runs `vp check`, `vp build` and `wrangler deploy --dry-run` on pull
+requests.
+
+### One-time setup
+
+Repository **secrets** (Settings → Secrets and variables → Actions):
+
+| secret                  | value                                                     |
+| ----------------------- | --------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`  | token with _Workers Scripts: Edit_ and _Pages: Edit_      |
+| `CLOUDFLARE_ACCOUNT_ID` | from the Cloudflare dashboard                             |
+| `TYPESAFE_API_KEY`      | your `apikey_…` key; pushed to the Worker on every deploy |
+
+Repository **variables** (not secret — they end up in the bundle or the dashboard):
+
+| variable               | value                                                      |
+| ---------------------- | ---------------------------------------------------------- |
+| `PAGES_PROJECT`        | Pages project name, e.g. `ai-router`                       |
+| `VITE_INTENT_ENDPOINT` | `https://ai-router-api.<subdomain>.workers.dev/api/intent` |
+| `ALLOWED_ORIGINS`      | the Pages origin, e.g. `https://ai-router.pages.dev`       |
+
+Chicken-and-egg on the first run: deploy the Worker once (`vp run deploy:worker`) to learn its URL,
+set `VITE_INTENT_ENDPOINT`, then let CI take over. After the first Pages deploy, set
+`ALLOWED_ORIGINS` to the Pages URL and re-run the workflow.
+
+### Deploying by hand
+
+```sh
+vp run deploy:worker    # wrangler deploy
+vp run deploy:pages     # vp build && wrangler pages deploy dist
+wrangler secret put TYPESAFE_API_KEY
+```
+
+Run the real Worker runtime locally with `vp run cf:dev` (reads `.dev.vars`). `vp dev` keeps using
+the Vite middleware instead, same code path via `server/intent-core.ts`.
+
+### GitHub Pages instead of Cloudflare Pages
+
+Works the same way — static frontend, same Worker backend:
+
+```sh
+PAGES_BASE=/<repo-name>/ VITE_INTENT_ENDPOINT=https://<worker>/api/intent vp build
+```
+
+Then add `https://<user>.github.io` to `ALLOWED_ORIGINS`. Never move `TYPESAFE_API_KEY` into a
+`VITE_` variable: that ships it to every visitor.
+
+### Single origin instead of two
+
+Add the assets binding shown commented out in `wrangler.jsonc` and drop the Pages job; the Worker
+then serves the SPA and the API from one origin, and no CORS is involved.
 
 ## Troubleshooting
 

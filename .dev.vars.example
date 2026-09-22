@@ -1,0 +1,3 @@
+# Used by `wrangler dev` only. In production set it once with:
+#   wrangler secret put TYPESAFE_API_KEY
+TYPESAFE_API_KEY=
