@@ -10,10 +10,12 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
     "vue": "^3.5.43",
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "@vitejs/plugin-vue": "^6.0.9",
     "typescript": "~6.0.2",
     "vite": "catalog:",
